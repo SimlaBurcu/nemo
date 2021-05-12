@@ -103,7 +103,7 @@ def test(model, device, test_loader, integer=False, verbose=False):
           disable=not verbose) as t:
         with torch.no_grad():
             for data, target in test_loader:
-                if integer:      # <== this will be useful when we get to the 
+                if integer:      # <== this will be useful when we get to the
                     data *= 255  #     IntegerDeployable stage
                 data, target = data.to(device), target.to(device)
                 output = model(data)
@@ -120,19 +120,41 @@ def test(model, device, test_loader, integer=False, verbose=False):
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 kwargs = {'num_workers': 1, 'pin_memory': True} if torch.cuda.is_available() else {}
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=True, download=True, transform=transforms.Compose([
-        transforms.ToTensor()
-    ])),
-    batch_size=128, shuffle=True, **kwargs
-)
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, transform=transforms.Compose([
-        transforms.ToTensor()
-    ])),
-    batch_size=128, shuffle=False, **kwargs
+datasets.MNIST.resources = [
+    ('https://ossci-datasets.s3.amazonaws.com/mnist/train-images-idx3-ubyte.gz', 'f68b3c2dcbeaaa9fbdd348bbdeb94873'),
+    ('https://ossci-datasets.s3.amazonaws.com/mnist/train-labels-idx1-ubyte.gz', 'd53e105ee54ea40749a09fcbcd1e9432'),
+    ('https://ossci-datasets.s3.amazonaws.com/mnist/t10k-images-idx3-ubyte.gz', '9fb629c4189551a2d022fa330f9573f3'),
+    ('https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ubyte.gz', 'ec29112dd5afa0611ce80d1b7f02629c')
+]
+
+# AND the rest of your code as usual for train and test (EXAMPLE):
+batch_sz = 100
+tr_ = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+# MNIST
+train_dataset = datasets.MNIST(
+    root='./dataset',
+    train=True,
+    transform=tr_,
+    download=True
 )
 
+test_dataset = datasets.MNIST(
+    root='./dataset',
+    train=False,
+    transform=tr_
+)
+# DataLoader
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset,
+    batch_size=batch_sz,
+    shuffle=True
+)
+
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset,
+    batch_size=batch_sz,
+    shuffle=False
+)
 """Download a pretrained model, and test it! Here we operate at what we call the ***FullPrecision*** stage: the regular PyTorch representation, which relies on real-valued tensors represented by `float32` in your CPU/GPU."""
 
 # !wget https://raw.githubusercontent.com/FrancescoConti/nemo_examples_helper/master/mnist_cnn_fp.pt
@@ -251,7 +273,7 @@ acc = test(model, device, test_loader)
 print("\nFakeQuantized @ mixed-precision (folded+equalized) accuracy: %.02f%%" % acc)
 assert acc >= 98.8
 
-"""Now we go back one step, reloading the state from the saved checkpoint (before folding) to show the "standard" deployment strategy that we use, based on Integer Batch-Norm (Rusci et al., https://arxiv.org/abs/1905.13082). 
+"""Now we go back one step, reloading the state from the saved checkpoint (before folding) to show the "standard" deployment strategy that we use, based on Integer Batch-Norm (Rusci et al., https://arxiv.org/abs/1905.13082).
 This is organized in two steps: first, we replace all `BatchNorm2d` in the network into a special quantized form, which is equivalent to freezing their parameters and transforms them, essentially, in channel-wise affine transforms. Then, we harden weights in their current quantum representation. Finally, we use the `set_deployment` method to bring the network to the ***QuantizedDeployable*** stage.
 
 In the *QuantizedDeployable* stage, the network is still using real-valued weights and activations; but all operations consume and produce quantized tensors that can always be decomposed in the product of a real-valued quantum with an integer tensor, which we call the *integer image*. The network cannot be trained any more, but it can be exported in an ONNX graph that faithfully represents quantization.
